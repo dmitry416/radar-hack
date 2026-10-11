@@ -3,6 +3,8 @@
 Minimal educational project: an external radar hack for CS2 written in C++17 (Windows only).
 Hold **Tab** to reveal enemies on the in-game radar, release to turn it off. Console only, no UI.
 
+**[Download the latest release](https://github.com/dmitry416/radar-hack/releases/latest)** (`radar-hack.exe`, standalone, no installation needed).
+
 ## How it works
 1. `Process` finds `cs2.exe` and opens it with read/write access.
 2. `resolveOffsets` finds the offsets at runtime: pattern scan of `client.dll` for the entity list and local pawn, and a walk of the SchemaSystem for netvars (`m_iHealth`, `m_iTeamNum`, `m_bSpotted`, ...). No hardcoded offsets, so it keeps working across game updates until a pattern breaks.
