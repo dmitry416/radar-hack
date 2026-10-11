@@ -27,8 +27,11 @@ target_link_libraries(radar-hack PRIVATE user32)
 
 if(MSVC)
     target_compile_options(radar-hack PRIVATE /W4)
+    set_property(TARGET radar-hack PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 else()
     target_compile_options(radar-hack PRIVATE -Wall -Wextra)
+    target_link_options(radar-hack PRIVATE -static)
 endif()
 
 # Console subsystem (no WIN32 flag): just a console window.
