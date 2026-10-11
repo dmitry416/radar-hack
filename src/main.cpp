@@ -1,5 +1,6 @@
-#include "entity.h"
-#include "process.h"
+#include "entity.hpp"
+#include "offsets.hpp"
+#include "process.hpp"
 
 #include <chrono>
 #include <iostream>
@@ -29,6 +30,14 @@ namespace {
 }
 
 int main() {
+    if (!offsets::init()) {
+        std::cerr << "Offsets init failed: " << offsets::last_error() << "
+";
+        return 1;
+    }
+    // Offsets are resolved; Process below is only used for read/write access.
+    offsets::shutdown();
+
     Process game;
     if (!game.attach("Counter-Strike 2", "client.dll")) return 1;
 

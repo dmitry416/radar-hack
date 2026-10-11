@@ -1,7 +1,8 @@
-#include "entity.h"
-#include "offsets.h"
+#include "entity.hpp"
 
-using namespace offsets;
+#include "offsets.hpp"
+
+namespace o = offsets;
 
 namespace {
     constexpr int MaxPlayers = 64;
@@ -11,26 +12,26 @@ namespace {
 }
 
 int Entity::getHealth() const {
-    return address ? process.read<int>(address + m_iHealth) : 0;
+    return address ? process.read<int>(address + o::m_iHealth) : 0;
 }
 
 int Entity::getTeamNum() const {
-    return address ? process.read<int>(address + m_iTeamNum) : 0;
+    return address ? process.read<int>(address + o::m_iTeamNum) : 0;
 }
 
 void Entity::setSpotted(bool value) const {
-    if (address) process.write<bool>(address + m_entitySpottedState + m_bSpotted, value);
+    if (address) process.write<bool>(address + o::m_entitySpottedState + o::m_bSpotted, value);
 }
 
 Entity getLocalPlayer(const Process &process) {
-    return {process, process.read<std::uintptr_t>(process.base() + dwLocalPlayerPawn)};
+    return {process, process.read<std::uintptr_t>(process.base() + o::dwLocalPlayerPawn)};
 }
 
 std::vector<Entity> getEntities(const Process &process) {
     std::vector<Entity> entities;
     entities.reserve(MaxPlayers);
 
-    const auto entityList = process.read<std::uintptr_t>(process.base() + dwEntityList);
+    const auto entityList = process.read<std::uintptr_t>(process.base() + o::dwEntityList);
     const auto controllers = process.read<std::uintptr_t>(entityList + ListFirstChunk);
     if (!controllers) return entities;
 
@@ -38,7 +39,7 @@ std::vector<Entity> getEntities(const Process &process) {
         const auto controller = process.read<std::uintptr_t>(controllers + i * EntityEntrySize);
         if (!controller) continue;
 
-        const auto pawnHandle = process.read<std::uint32_t>(controller + m_hPlayerPawn);
+        const auto pawnHandle = process.read<std::uint32_t>(controller + o::m_hPlayerPawn);
         if (!pawnHandle) continue;
 
         const auto chunk = process.read<std::uintptr_t>(
