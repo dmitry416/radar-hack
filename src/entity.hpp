@@ -1,5 +1,6 @@
 #pragma once
 
+#include "offsets.hpp"
 #include "process.hpp"
 
 #include <cstdint>
@@ -10,8 +11,8 @@ constexpr int TeamCT = 3;
 
 class Entity {
 public:
-    Entity(const Process &process, std::uintptr_t address)
-        : process(&process), address(address) {}
+    Entity(const Process &process, const GameOffsets &offsets, std::uintptr_t address)
+        : process(&process), offsets(&offsets), address(address) {}
 
     bool isValid() const { return address != 0; }
     std::uintptr_t getAddress() const { return address; }
@@ -21,9 +22,10 @@ public:
 
 private:
     const Process *process;
+    const GameOffsets *offsets;
     std::uintptr_t address;
 };
 
-Entity getLocalPlayer(const Process &process);
+Entity getLocalPlayer(const Process &process, const GameOffsets &offsets);
 
-std::vector<Entity> getEntities(const Process &process);
+std::vector<Entity> getEntities(const Process &process, const GameOffsets &offsets);

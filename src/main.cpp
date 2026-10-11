@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <iostream>
+#include <string>
 #include <thread>
 
 namespace {
@@ -19,15 +20,15 @@ namespace {
         return team == TeamT || team == TeamCT;
     }
 
-    void revealEnemies(const Process &process) {
-        const Entity local = getLocalPlayer(process);
+    void revealEnemies(const Process &process, const GameOffsets &offsets) {
+        const Entity local = getLocalPlayer(process, offsets);
         const int localHealth = local.getHealth();
         if (localHealth <= 0 || localHealth > MaxHealth) return;
 
         const int localTeam = local.getTeamNum();
         if (!isPlayerTeam(localTeam)) return;
 
-        for (const Entity &entity: getEntities(process)) {
+        for (const Entity &entity: getEntities(process, offsets)) {
             if (entity.getHealth() > 0 && entity.getTeamNum() != localTeam)
                 entity.setSpotted(true);
         }
@@ -41,8 +42,10 @@ int main() {
         return 1;
     }
 
-    if (!offsets::init(game)) {
-        std::cerr << "Offsets init failed: " << offsets::lastError() << "\n";
+    GameOffsets offsets;
+    std::string error;
+    if (!resolveOffsets(game, offsets, error)) {
+        std::cerr << "Offsets init failed: " << error << "\n";
         return 1;
     }
 
@@ -57,7 +60,7 @@ int main() {
             wasActive = active;
         }
 
-        if (active) revealEnemies(game);
+        if (active) revealEnemies(game, offsets);
 
         std::this_thread::sleep_for(PollInterval);
     }

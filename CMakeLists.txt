@@ -8,8 +8,13 @@ add_executable(radar-hack
         src/main.cpp
         src/process.cpp
         src/entity.cpp
+        src/offsets.cpp
+        src/memory_scan.cpp
+        src/schema.cpp
         src/entity.hpp
         src/offsets.hpp
+        src/memory_scan.hpp
+        src/schema.hpp
         src/process.hpp
 )
 

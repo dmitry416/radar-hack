@@ -1,7 +1,4 @@
 #include "entity.hpp"
-#include "offsets.hpp"
-
-namespace o = offsets;
 
 namespace {
     constexpr int MaxPlayers = 64;
@@ -14,31 +11,31 @@ namespace {
 }
 
 int Entity::getHealth() const {
-    return isValid() ? process->read<int>(address + o::m_iHealth).value_or(0) : 0;
+    return isValid() ? process->read<int>(address + offsets->m_iHealth).value_or(0) : 0;
 }
 
 int Entity::getTeamNum() const {
-    return isValid() ? process->read<int>(address + o::m_iTeamNum).value_or(0) : 0;
+    return isValid() ? process->read<int>(address + offsets->m_iTeamNum).value_or(0) : 0;
 }
 
 void Entity::setSpotted(bool value) const {
     if (!isValid()) return;
 
-    const std::uintptr_t spotted = address + o::m_entitySpottedState + o::m_bSpotted;
+    const std::uintptr_t spotted = address + offsets->m_entitySpottedState + offsets->m_bSpotted;
     if (process->read<bool>(spotted).value_or(value) != value)
         process->write<bool>(spotted, value);
 }
 
-Entity getLocalPlayer(const Process &process) {
-    const auto pawn = process.read<std::uintptr_t>(o::clientBase + o::dwLocalPlayerPawn);
-    return {process, pawn.value_or(0)};
+Entity getLocalPlayer(const Process &process, const GameOffsets &offsets) {
+    const auto pawn = process.read<std::uintptr_t>(offsets.clientBase + offsets.dwLocalPlayerPawn);
+    return {process, offsets, pawn.value_or(0)};
 }
 
-std::vector<Entity> getEntities(const Process &process) {
+std::vector<Entity> getEntities(const Process &process, const GameOffsets &offsets) {
     std::vector<Entity> entities;
     entities.reserve(MaxPlayers);
 
-    const auto entityList = process.read<std::uintptr_t>(o::clientBase + o::dwEntityList).value_or(0);
+    const auto entityList = process.read<std::uintptr_t>(offsets.clientBase + offsets.dwEntityList).value_or(0);
     if (!entityList) return entities;
 
     const auto controllers = process.read<std::uintptr_t>(entityList + ListChunksOffset).value_or(0);
@@ -48,7 +45,7 @@ std::vector<Entity> getEntities(const Process &process) {
         const auto controller = process.read<std::uintptr_t>(controllers + i * EntityEntrySize).value_or(0);
         if (!controller) continue;
 
-        const auto pawnHandle = process.read<std::uint32_t>(controller + o::m_hPlayerPawn).value_or(0);
+        const auto pawnHandle = process.read<std::uint32_t>(controller + offsets.m_hPlayerPawn).value_or(0);
         if (!pawnHandle) continue;
 
         const std::uint32_t chunkIndex = (pawnHandle & HandleIndexMask) >> HandleChunkShift;
@@ -58,7 +55,7 @@ std::vector<Entity> getEntities(const Process &process) {
 
         const auto pawn = process.read<std::uintptr_t>(
                 chunk + EntityEntrySize * (pawnHandle & HandleEntryMask)).value_or(0);
-        if (pawn) entities.emplace_back(process, pawn);
+        if (pawn) entities.emplace_back(process, offsets, pawn);
     }
     return entities;
 }
