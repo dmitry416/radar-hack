@@ -1,6 +1,6 @@
-# radar-hack
+# Radar-Hack
 
-Minimal educational project: an external radar hack for CS2 written in C++17 (Windows only).
+Minimal and undetectable project: an external radar hack for CS2 written in C++17 (Windows only).
 Hold **Tab** to reveal enemies on the in-game radar, release to turn it off. Console only, no UI.
 
 **[Download the latest release](https://github.com/dmitry416/radar-hack/releases/latest)** (`radar-hack.exe`, standalone, no installation needed).
