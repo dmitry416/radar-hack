@@ -1,5 +1,7 @@
 #include "entity.hpp"
 
+#include <cstring>
+
 namespace {
     constexpr int MaxPlayers = 64;
     constexpr std::uintptr_t EntityEntrySize = 0x70;
@@ -41,8 +43,12 @@ std::vector<Entity> getEntities(const Process &process, const GameOffsets &offse
     const auto controllers = process.read<std::uintptr_t>(entityList + ListChunksOffset).value_or(0);
     if (!controllers) return entities;
 
+    std::vector<std::uint8_t> block(MaxPlayers * EntityEntrySize);
+    if (!process.readBuffer(controllers, block.data(), block.size())) return entities;
+
     for (int i = 0; i < MaxPlayers; ++i) {
-        const auto controller = process.read<std::uintptr_t>(controllers + i * EntityEntrySize).value_or(0);
+        std::uintptr_t controller;
+        std::memcpy(&controller, &block[i * EntityEntrySize], sizeof(controller));
         if (!controller) continue;
 
         const auto pawnHandle = process.read<std::uint32_t>(controller + offsets.m_hPlayerPawn).value_or(0);

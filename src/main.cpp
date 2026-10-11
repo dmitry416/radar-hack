@@ -10,7 +10,7 @@
 namespace {
     constexpr int VK_TOGGLE = VK_TAB;
     constexpr int MaxHealth = 100;
-    constexpr auto PollInterval = std::chrono::milliseconds(2);
+    constexpr auto PollInterval = std::chrono::milliseconds(10);
 
     bool isKeyHeld(int vk) {
         return (GetAsyncKeyState(vk) & 0x8000) != 0;
