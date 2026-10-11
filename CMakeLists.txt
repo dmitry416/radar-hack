@@ -8,9 +8,13 @@ add_executable(radar-hack
         src/main.cpp
         src/process.cpp
         src/entity.cpp
+        src/entity.hpp
+        src/offsets.hpp
+        src/process.hpp
 )
 
 target_compile_definitions(radar-hack PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_link_libraries(radar-hack PRIVATE user32)
 
 if(MSVC)
     target_compile_options(radar-hack PRIVATE /W4)

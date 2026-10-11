@@ -1,9 +1,17 @@
 #pragma once
 
 #include <windows.h>
-#include <cstdint>
 
-// Thin wrapper over a handle to the game process.
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <string>
+
+struct ModuleInfo {
+    std::uintptr_t base = 0;
+    std::size_t size = 0;
+};
+
 class Process {
 public:
     Process() = default;
@@ -11,27 +19,35 @@ public:
     Process(const Process &) = delete;
     Process &operator=(const Process &) = delete;
 
-    // Finds the window by title, opens the process and resolves the module base.
-    bool attach(const char *windowTitle, const char *moduleName);
+    bool attach(const char *processName);
+    void detach();
 
-    // True while the target process is still running.
     bool isAlive() const;
+    bool isForeground() const;
 
-    std::uintptr_t base() const { return moduleBase; }
+    DWORD id() const { return processId; }
+    const std::string &lastError() const { return error; }
+
+    bool findModule(const char *name, ModuleInfo &out) const;
+    bool readBuffer(std::uintptr_t address, void *out, std::size_t size) const;
+    std::string readString(std::uintptr_t address, std::size_t maxLength) const;
 
     template<typename T>
-    T read(std::uintptr_t address) const {
+    std::optional<T> read(std::uintptr_t address) const {
         T value{};
-        ReadProcessMemory(handle, reinterpret_cast<LPCVOID>(address), &value, sizeof(T), nullptr);
+        if (!readBuffer(address, &value, sizeof(T))) return std::nullopt;
         return value;
     }
 
     template<typename T>
-    void write(std::uintptr_t address, const T &value) const {
-        WriteProcessMemory(handle, reinterpret_cast<LPVOID>(address), &value, sizeof(T), nullptr);
+    bool write(std::uintptr_t address, const T &value) const {
+        SIZE_T written = 0;
+        return WriteProcessMemory(handle, reinterpret_cast<LPVOID>(address), &value, sizeof(T), &written)
+               && written == sizeof(T);
     }
 
 private:
     HANDLE handle = nullptr;
-    std::uintptr_t moduleBase = 0;
+    DWORD processId = 0;
+    std::string error;
 };

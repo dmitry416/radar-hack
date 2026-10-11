@@ -1,13 +1,6 @@
 #pragma once
 
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <Windows.h>
-#include <TlHelp32.h>
+#include "process.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -16,337 +9,278 @@
 #include <cstring>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace offsets {
+    // Relative to client.dll base
+    inline std::uintptr_t dwEntityList = 0;
+    inline std::uintptr_t dwLocalPlayerPawn = 0;
 
-// results (valid after a successful init())
+    inline std::ptrdiff_t m_hPlayerPawn = 0;
+    inline std::ptrdiff_t m_iHealth = 0;
+    inline std::ptrdiff_t m_iTeamNum = 0;
+    inline std::ptrdiff_t m_entitySpottedState = 0;
+    inline std::ptrdiff_t m_bSpotted = 0;
 
-// relative to client.dll base
-inline std::uintptr_t dwEntityList = 0;
-inline std::uintptr_t dwLocalPlayerPawn = 0;
+    inline std::uintptr_t clientBase = 0;
 
-// CCSPlayerController
-inline std::ptrdiff_t m_hPlayerPawn = 0;
+    namespace detail {
+        constexpr std::size_t PageSize = 0x1000;
 
-// C_BaseEntity / C_CSPlayerPawn
-inline std::ptrdiff_t m_iHealth = 0;
-inline std::ptrdiff_t m_iTeamNum = 0;
-inline std::ptrdiff_t m_entitySpottedState = 0;
+        constexpr std::size_t HashBuckets = 256;
+        constexpr std::size_t HashSize = 0x1870;
+        constexpr std::size_t HashUsedOffset = 0x0C;
+        constexpr std::size_t HashPeakOffset = 0x10;
+        constexpr std::size_t HashBlobListOffset = 0x20;
+        constexpr std::size_t HashBucketsOffset = 0x60;
+        constexpr std::size_t HashBucketSize = 0x18;
+        constexpr std::size_t BucketFirstOffset = 0x10;
+        constexpr std::size_t NodeNextOffset = 0x8;
+        constexpr std::size_t NodeDataOffset = 0x10;
+        constexpr std::size_t BlobNextOffset = 0x0;
+        constexpr std::size_t BlobDataOffset = 0x10;
+        constexpr int ListGuard = 100000;
 
-// EntitySpottedState_t
-inline std::ptrdiff_t m_bSpotted = 0;
+        constexpr std::size_t SchemaScopeCountOffset = 0x190;
+        constexpr std::size_t SchemaScopesOffset = 0x198;
+        constexpr std::size_t SchemaRegistrationsOffset = 0x280;
+        constexpr std::size_t ScopeNameOffset = 0x8;
+        constexpr std::size_t ScopeClassesOffset = 0x560;
+        constexpr std::size_t ClassNameOffset = 0x8;
+        constexpr std::size_t ClassFieldCountOffset = 0x24;
+        constexpr std::size_t ClassFieldsOffset = 0x30;
+        constexpr std::size_t FieldSize = 0x20;
+        constexpr std::size_t FieldNameOffset = 0x0;
+        constexpr std::size_t FieldOffsetOffset = 0x10;
 
-// process info
+        inline std::string &error() {
+            static std::string message;
+            return message;
+        }
 
-inline DWORD pid = 0;
-inline HANDLE process = nullptr;
-inline std::uintptr_t client_base = 0;
+        inline bool fail(std::string message) {
+            error() = std::move(message);
+            return false;
+        }
 
-namespace detail {
+        struct ModuleImage {
+            std::uintptr_t base = 0;
+            std::vector<std::uint8_t> bytes;
+        };
 
-inline std::string& error() {
-    static std::string e;
-    return e;
-}
+        inline bool loadModule(const Process &process, const char *name, ModuleImage &image) {
+            ModuleInfo info;
+            if (!process.findModule(name, info)) return false;
 
-inline bool fail(std::string msg) {
-    error() = std::move(msg);
-    return false;
-}
-
-template <typename T>
-inline bool read_raw(std::uintptr_t addr, T& out) {
-    SIZE_T n = 0;
-    return ReadProcessMemory(process, reinterpret_cast<LPCVOID>(addr), &out, sizeof(T), &n) &&
-           n == sizeof(T);
-}
-
-inline bool read_buf(std::uintptr_t addr, void* out, std::size_t size) {
-    SIZE_T n = 0;
-    return ReadProcessMemory(process, reinterpret_cast<LPCVOID>(addr), out, size, &n) && n == size;
-}
-
-inline std::string read_cstr(std::uintptr_t addr, std::size_t max = 256) {
-    std::string s(max, '\0');
-    SIZE_T n = 0;
-    ReadProcessMemory(process, reinterpret_cast<LPCVOID>(addr), s.data(), max, &n);
-    s.resize(std::strlen(s.c_str()));
-    return s;
-}
-
-struct Module {
-    std::uintptr_t base = 0;
-    std::size_t size = 0;
-    std::vector<std::uint8_t> image;  // local copy
-};
-
-inline DWORD find_pid(const wchar_t* name) {
-    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snap == INVALID_HANDLE_VALUE) return 0;
-    PROCESSENTRY32W e{};
-    e.dwSize = sizeof(e);
-    DWORD result = 0;
-    if (Process32FirstW(snap, &e)) {
-        do {
-            if (_wcsicmp(e.szExeFile, name) == 0) {
-                result = e.th32ProcessID;
-                break;
+            image.base = info.base;
+            image.bytes.assign(info.size, 0);
+            for (std::size_t offset = 0; offset < info.size; offset += PageSize) {
+                const std::size_t chunk = (std::min)(PageSize, info.size - offset);
+                process.readBuffer(info.base + offset, image.bytes.data() + offset, chunk);
             }
-        } while (Process32NextW(snap, &e));
-    }
-    CloseHandle(snap);
-    return result;
-}
-
-inline bool load_module(const wchar_t* name, Module& m) {
-    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
-    if (snap == INVALID_HANDLE_VALUE) return false;
-    MODULEENTRY32W e{};
-    e.dwSize = sizeof(e);
-    bool found = false;
-    if (Module32FirstW(snap, &e)) {
-        do {
-            if (_wcsicmp(e.szModule, name) == 0) {
-                m.base = reinterpret_cast<std::uintptr_t>(e.modBaseAddr);
-                m.size = e.modBaseSize;
-                found = true;
-                break;
-            }
-        } while (Module32NextW(snap, &e));
-    }
-    CloseHandle(snap);
-    if (!found) return false;
-
-    // read page by page so unreadable pages don't fail the whole copy
-    m.image.assign(m.size, 0);
-    for (std::size_t off = 0; off < m.size; off += 0x1000) {
-        std::size_t chunk = (std::min)(static_cast<std::size_t>(0x1000), m.size - off);
-        SIZE_T n = 0;
-        ReadProcessMemory(process, reinterpret_cast<LPCVOID>(m.base + off), m.image.data() + off,
-                          chunk, &n);
-    }
-    return true;
-}
-
-// Pattern: "48 89 0D ? ? ? ? E9" ('?' / '??' = wildcard). Returns offset of the match or -1.
-inline std::ptrdiff_t scan(const Module& m, const char* pattern) {
-    std::vector<int> pat;
-    for (const char* p = pattern; *p;) {
-        if (*p == ' ') {
-            ++p;
-            continue;
+            return true;
         }
-        if (*p == '?') {
-            pat.push_back(-1);
-            while (*p == '?') ++p;
-        } else {
-            pat.push_back(static_cast<int>(std::strtoul(std::string(p, 2).c_str(), nullptr, 16)));
-            p += 2;
-        }
-    }
-    if (pat.empty() || m.image.size() < pat.size()) return -1;
-    const auto* d = m.image.data();
-    for (std::size_t i = 0; i + pat.size() <= m.image.size(); ++i) {
-        std::size_t j = 0;
-        while (j < pat.size() && (pat[j] < 0 || d[i + j] == pat[j])) ++j;
-        if (j == pat.size()) return static_cast<std::ptrdiff_t>(i);
-    }
-    return -1;
-}
 
-// Match, then resolve a rip-relative rel32 located `rel_at` bytes into the match.
-// Returns the RVA of the target, or 0.
-inline std::uintptr_t scan_rip(const Module& m, const char* pattern, std::size_t rel_at) {
-    std::ptrdiff_t pos = scan(m, pattern);
-    if (pos < 0) return 0;
-    std::int32_t rel;
-    std::memcpy(&rel, m.image.data() + pos + rel_at, sizeof(rel));
-    return static_cast<std::uintptr_t>(static_cast<std::int64_t>(pos + rel_at + 4) + rel);
-}
-
-// Match, then read a u32 immediate located `imm_at` bytes into the match.
-inline bool scan_u32(const Module& m, const char* pattern, std::size_t imm_at, std::uint32_t& out) {
-    std::ptrdiff_t pos = scan(m, pattern);
-    if (pos < 0) return false;
-    std::memcpy(&out, m.image.data() + pos + imm_at, sizeof(out));
-    return true;
-}
-
-// SchemaSystem walk (layouts taken from src/source2/schema_system/*.rs)
-
-// Collects the data pointers stored in a CUtlTSHash<..., 256 buckets> located at `hash_addr`.
-inline std::vector<std::uintptr_t> ts_hash_elements(std::uintptr_t hash_addr) {
-    constexpr std::size_t kBuckets = 256, kBucketsOff = 0x60, kBucketSize = 0x18, kTotal = 0x1870;
-    std::vector<std::uint8_t> h(kTotal);
-    std::vector<std::uintptr_t> out;
-    if (!read_buf(hash_addr, h.data(), h.size())) return out;
-
-    auto i32 = [&](std::size_t o) {
-        std::int32_t v;
-        std::memcpy(&v, &h[o], 4);
-        return v;
-    };
-    auto u64 = [&](std::size_t o) {
-        std::uintptr_t v;
-        std::memcpy(&v, &h[o], 8);
-        return v;
-    };
-
-    std::unordered_set<std::uintptr_t> seen;
-    auto push = [&](std::uintptr_t p) {
-        if (p && seen.insert(p).second) out.push_back(p);
-    };
-
-    // committed elements: walk each bucket's chain
-    const std::size_t used = static_cast<std::size_t>(i32(0x0C));
-    std::size_t count = 0;
-    for (std::size_t b = 0; b < kBuckets && count < used; ++b) {
-        std::uintptr_t node = u64(kBucketsOff + b * kBucketSize + 0x10);  // first_uncommitted
-        for (int guard = 0; node && guard < 100000; ++guard) {
-            std::uintptr_t next = 0, data = 0;
-            if (!read_raw(node + 0x8, next) || !read_raw(node + 0x10, data)) break;
-            if (data) {
-                push(data);
-                ++count;
-            }
-            if (count >= used) break;
-            node = next;
-        }
-    }
-
-    // free-list blobs
-    const std::size_t peak = static_cast<std::size_t>(i32(0x10));
-    std::uintptr_t blob = u64(0x20);
-    std::size_t n = 0;
-    for (int guard = 0; blob && guard < 100000; ++guard) {
-        std::uintptr_t next = 0, data = 0;
-        if (!read_raw(blob + 0x0, next) || !read_raw(blob + 0x10, data)) break;
-        if (data) {
-            push(data);
-            ++n;
-        }
-        if (n >= peak) break;
-        blob = next;
-    }
-    return out;
-}
-
-struct FieldRequest {
-    const char* class_name;
-    const char* field_name;
-    std::ptrdiff_t* target;
-    bool found = false;
-};
-
-inline bool resolve_netvars(const Module& schemasystem, FieldRequest* reqs, std::size_t req_count) {
-    std::uintptr_t rva = scan_rip(schemasystem, "4C 8D 35 ? ? ? ? 0F 28 45", 3);
-    if (!rva) return fail("schemasystem pattern is outdated");
-    const std::uintptr_t sys = schemasystem.base + rva;
-
-    std::int32_t scope_count = 0, registrations = 0;
-    std::uintptr_t scopes = 0;
-    if (!read_raw(sys + 0x190, scope_count) || !read_raw(sys + 0x198, scopes) ||
-        !read_raw(sys + 0x280, registrations))
-        return fail("failed to read SchemaSystem");
-    if (registrations == 0) return fail("schema system has no registrations yet (game still loading?)");
-
-    for (std::int32_t i = 0; i < scope_count; ++i) {
-        std::uintptr_t scope = 0;
-        if (!read_raw(scopes + static_cast<std::uintptr_t>(i) * 8, scope)) continue;
-        if (read_cstr(scope + 0x8) != "client.dll") continue;
-
-        for (std::uintptr_t cls : ts_hash_elements(scope + 0x560)) {
-            std::uintptr_t name_ptr = 0;
-            if (!read_raw(cls + 0x8, name_ptr)) continue;
-            std::string cname = read_cstr(name_ptr, 128);
-
-            for (std::size_t r = 0; r < req_count; ++r) {
-                if (cname != reqs[r].class_name) continue;
-
-                std::int16_t field_count = 0;
-                std::uintptr_t fields = 0;
-                if (!read_raw(cls + 0x24, field_count) || !read_raw(cls + 0x30, fields)) continue;
-
-                for (std::int16_t f = 0; f < field_count; ++f) {
-                    std::uintptr_t fptr = fields + static_cast<std::uintptr_t>(f) * 0x20;
-                    std::uintptr_t fname = 0;
-                    std::int32_t off = 0;
-                    if (!read_raw(fptr, fname) || !read_raw(fptr + 0x10, off)) continue;
-                    if (read_cstr(fname, 128) == reqs[r].field_name) {
-                        *reqs[r].target = off;
-                        reqs[r].found = true;
-                        break;
-                    }
+        // Pattern syntax: "48 89 0D ? ? ? ? E9", '?' is a wildcard byte.
+        inline std::ptrdiff_t scan(const ModuleImage &image, const char *pattern) {
+            std::vector<int> bytes;
+            for (const char *p = pattern; *p;) {
+                if (*p == ' ') {
+                    ++p;
+                } else if (*p == '?') {
+                    bytes.push_back(-1);
+                    while (*p == '?') ++p;
+                } else {
+                    bytes.push_back(static_cast<int>(std::strtoul(std::string(p, 2).c_str(), nullptr, 16)));
+                    p += 2;
                 }
             }
+
+            const auto &data = image.bytes;
+            if (bytes.empty() || data.size() < bytes.size()) return -1;
+
+            for (std::size_t i = 0; i + bytes.size() <= data.size(); ++i) {
+                std::size_t j = 0;
+                while (j < bytes.size() && (bytes[j] < 0 || data[i + j] == bytes[j])) ++j;
+                if (j == bytes.size()) return static_cast<std::ptrdiff_t>(i);
+            }
+            return -1;
         }
-        break;
+
+        // Resolves the rip-relative rel32 found `relAt` bytes into the match; returns the target RVA.
+        inline std::uintptr_t scanRip(const ModuleImage &image, const char *pattern, std::size_t relAt) {
+            const std::ptrdiff_t pos = scan(image, pattern);
+            if (pos < 0) return 0;
+
+            std::int32_t rel;
+            std::memcpy(&rel, image.bytes.data() + pos + relAt, sizeof(rel));
+            return static_cast<std::uintptr_t>(static_cast<std::int64_t>(pos + relAt + 4) + rel);
+        }
+
+        inline bool scanU32(const ModuleImage &image, const char *pattern, std::size_t immAt,
+                            std::uint32_t &out) {
+            const std::ptrdiff_t pos = scan(image, pattern);
+            if (pos < 0) return false;
+
+            std::memcpy(&out, image.bytes.data() + pos + immAt, sizeof(out));
+            return true;
+        }
+
+        inline std::vector<std::uintptr_t> hashElements(const Process &process, std::uintptr_t hashAddress) {
+            std::vector<std::uint8_t> hash(HashSize);
+            std::vector<std::uintptr_t> result;
+            if (!process.readBuffer(hashAddress, hash.data(), hash.size())) return result;
+
+            auto i32 = [&](std::size_t offset) {
+                std::int32_t value;
+                std::memcpy(&value, &hash[offset], sizeof(value));
+                return value;
+            };
+            auto u64 = [&](std::size_t offset) {
+                std::uintptr_t value;
+                std::memcpy(&value, &hash[offset], sizeof(value));
+                return value;
+            };
+
+            std::unordered_set<std::uintptr_t> seen;
+            auto push = [&](std::uintptr_t pointer) {
+                if (pointer && seen.insert(pointer).second) result.push_back(pointer);
+            };
+
+            const std::size_t used = static_cast<std::size_t>(i32(HashUsedOffset));
+            std::size_t count = 0;
+            for (std::size_t b = 0; b < HashBuckets && count < used; ++b) {
+                std::uintptr_t node = u64(HashBucketsOffset + b * HashBucketSize + BucketFirstOffset);
+                for (int guard = 0; node && guard < ListGuard; ++guard) {
+                    const auto next = process.read<std::uintptr_t>(node + NodeNextOffset);
+                    const auto data = process.read<std::uintptr_t>(node + NodeDataOffset);
+                    if (!next || !data) break;
+
+                    if (*data) {
+                        push(*data);
+                        ++count;
+                    }
+                    if (count >= used) break;
+                    node = *next;
+                }
+            }
+
+            const std::size_t peak = static_cast<std::size_t>(i32(HashPeakOffset));
+            std::uintptr_t blob = u64(HashBlobListOffset);
+            std::size_t blobCount = 0;
+            for (int guard = 0; blob && guard < ListGuard; ++guard) {
+                const auto next = process.read<std::uintptr_t>(blob + BlobNextOffset);
+                const auto data = process.read<std::uintptr_t>(blob + BlobDataOffset);
+                if (!next || !data) break;
+
+                if (*data) {
+                    push(*data);
+                    ++blobCount;
+                }
+                if (blobCount >= peak) break;
+                blob = *next;
+            }
+            return result;
+        }
+
+        struct FieldRequest {
+            const char *className;
+            const char *fieldName;
+            std::ptrdiff_t *target;
+            bool found = false;
+        };
+
+        inline bool resolveNetvars(const Process &process, const ModuleImage &schemaSystem,
+                                   FieldRequest *requests, std::size_t requestCount) {
+            const std::uintptr_t rva = scanRip(schemaSystem, "4C 8D 35 ? ? ? ? 0F 28 45", 3);
+            if (!rva) return fail("schemasystem pattern is outdated");
+            const std::uintptr_t system = schemaSystem.base + rva;
+
+            std::int32_t scopeCount = 0, registrations = 0;
+            std::uintptr_t scopes = 0;
+            if (!process.readBuffer(system + SchemaScopeCountOffset, &scopeCount, sizeof(scopeCount)) ||
+                !process.readBuffer(system + SchemaScopesOffset, &scopes, sizeof(scopes)) ||
+                !process.readBuffer(system + SchemaRegistrationsOffset, &registrations, sizeof(registrations)))
+                return fail("failed to read SchemaSystem");
+            if (registrations == 0) return fail("schema system has no registrations yet (game still loading?)");
+
+            std::size_t remaining = requestCount;
+            for (std::int32_t i = 0; i < scopeCount && remaining; ++i) {
+                const auto scope = process.read<std::uintptr_t>(scopes + static_cast<std::uintptr_t>(i) * 8);
+                if (!scope || process.readString(*scope + ScopeNameOffset, 64) != "client.dll") continue;
+
+                for (std::uintptr_t cls: hashElements(process, *scope + ScopeClassesOffset)) {
+                    if (!remaining) break;
+
+                    const auto namePointer = process.read<std::uintptr_t>(cls + ClassNameOffset);
+                    if (!namePointer) continue;
+                    const std::string className = process.readString(*namePointer, 128);
+
+                    for (std::size_t r = 0; r < requestCount; ++r) {
+                        if (requests[r].found || className != requests[r].className) continue;
+
+                        const auto fieldCount = process.read<std::int16_t>(cls + ClassFieldCountOffset);
+                        const auto fields = process.read<std::uintptr_t>(cls + ClassFieldsOffset);
+                        if (!fieldCount || !fields) continue;
+
+                        for (std::int16_t f = 0; f < *fieldCount; ++f) {
+                            const std::uintptr_t field = *fields + static_cast<std::uintptr_t>(f) * FieldSize;
+                            const auto fieldName = process.read<std::uintptr_t>(field + FieldNameOffset);
+                            const auto fieldOffset = process.read<std::int32_t>(field + FieldOffsetOffset);
+                            if (!fieldName || !fieldOffset) continue;
+
+                            if (process.readString(*fieldName, 128) == requests[r].fieldName) {
+                                *requests[r].target = *fieldOffset;
+                                requests[r].found = true;
+                                --remaining;
+                                break;
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+
+            for (std::size_t r = 0; r < requestCount; ++r) {
+                if (!requests[r].found)
+                    return fail(std::string("netvar not found: ") + requests[r].className +
+                                "::" + requests[r].fieldName);
+            }
+            return true;
+        }
     }
 
-    for (std::size_t r = 0; r < req_count; ++r)
-        if (!reqs[r].found)
-            return fail(std::string("netvar not found: ") + reqs[r].class_name +
-                        "::" + reqs[r].field_name);
-    return true;
+    inline const std::string &lastError() {
+        return detail::error();
+    }
+
+    inline bool init(const Process &process) {
+        using namespace detail;
+
+        ModuleImage client, schema;
+        if (!loadModule(process, "client.dll", client)) return fail("client.dll not loaded");
+        if (!loadModule(process, "schemasystem.dll", schema)) return fail("schemasystem.dll not loaded");
+        clientBase = client.base;
+
+        dwEntityList = scanRip(client, "48 89 0D ? ? ? ? E9 ? ? ? ? CC", 3);
+        if (!dwEntityList) return fail("dwEntityList pattern is outdated");
+
+        // dwLocalPlayerPawn = CPrediction global + the pawn field offset embedded in a prediction routine
+        const std::uintptr_t prediction =
+                scanRip(client, "48 8D 05 ? ? ? ? C3 CC CC CC CC CC CC CC CC 40 53 56 41 54", 3);
+        std::uint32_t pawnInPrediction = 0;
+        if (!prediction || !scanU32(client, "4C 39 B6 ? ? ? ? 74 ? 44 88 BE", 3, pawnInPrediction))
+            return fail("dwLocalPlayerPawn pattern is outdated");
+        dwLocalPlayerPawn = prediction + pawnInPrediction;
+
+        FieldRequest requests[] = {
+            {"CCSPlayerController", "m_hPlayerPawn", &m_hPlayerPawn},
+            {"C_BaseEntity", "m_iHealth", &m_iHealth},
+            {"C_BaseEntity", "m_iTeamNum", &m_iTeamNum},
+            {"C_CSPlayerPawn", "m_entitySpottedState", &m_entitySpottedState},
+            {"EntitySpottedState_t", "m_bSpotted", &m_bSpotted},
+        };
+        return resolveNetvars(process, schema, requests, sizeof(requests) / sizeof(requests[0]));
+    }
 }
-
-}  // namespace detail
-
-// public API
-
-inline const std::string& last_error() { return detail::error(); }
-
-template <typename T>
-inline T read(std::uintptr_t addr) {
-    T v{};
-    detail::read_raw(addr, v);
-    return v;
-}
-
-inline void shutdown() {
-    if (process) CloseHandle(process);
-    process = nullptr;
-    pid = 0;
-    client_base = 0;
-}
-
-// Attaches to cs2.exe and fills all offsets. Safe to call again (e.g. after a game restart).
-inline bool init() {
-    using namespace detail;
-    shutdown();
-
-    pid = find_pid(L"cs2.exe");
-    if (!pid) return fail("cs2.exe not found");
-
-    process = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, FALSE, pid);
-    if (!process) return fail("OpenProcess failed (run as administrator?)");
-
-    Module client, schema;
-    if (!load_module(L"client.dll", client)) return fail("client.dll not loaded");
-    if (!load_module(L"schemasystem.dll", schema)) return fail("schemasystem.dll not loaded");
-    client_base = client.base;
-
-    // dwEntityList: mov [rip+x], rcx ; jmp ; int3
-    dwEntityList = scan_rip(client, "48 89 0D ? ? ? ? E9 ? ? ? ? CC", 3);
-    if (!dwEntityList) return fail("dwEntityList pattern is outdated");
-
-    // dwLocalPlayerPawn: offset inside the CPrediction global (dwPrediction + imm32)
-    std::uintptr_t prediction =
-        scan_rip(client, "48 8D 05 ? ? ? ? C3 CC CC CC CC CC CC CC CC 40 53 56 41 54", 3);
-    std::uint32_t pawn_in_prediction = 0;
-    if (!prediction || !scan_u32(client, "4C 39 B6 ? ? ? ? 74 ? 44 88 BE", 3, pawn_in_prediction))
-        return fail("dwLocalPlayerPawn pattern is outdated");
-    dwLocalPlayerPawn = prediction + pawn_in_prediction;
-
-    FieldRequest reqs[] = {
-        {"CCSPlayerController", "m_hPlayerPawn", &m_hPlayerPawn},
-        {"C_BaseEntity", "m_iHealth", &m_iHealth},
-        {"C_BaseEntity", "m_iTeamNum", &m_iTeamNum},
-        {"C_CSPlayerPawn", "m_entitySpottedState", &m_entitySpottedState},
-        {"EntitySpottedState_t", "m_bSpotted", &m_bSpotted},
-    };
-    return resolve_netvars(schema, reqs, sizeof(reqs) / sizeof(reqs[0]));
-}
-
-}  // namespace offsets

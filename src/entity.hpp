@@ -5,24 +5,25 @@
 #include <cstdint>
 #include <vector>
 
-// A player pawn in the game's memory.
+constexpr int TeamT = 2;
+constexpr int TeamCT = 3;
+
 class Entity {
 public:
     Entity(const Process &process, std::uintptr_t address)
-        : process(process), address(address) {}
+        : process(&process), address(address) {}
 
+    bool isValid() const { return address != 0; }
     std::uintptr_t getAddress() const { return address; }
     int getHealth() const;
     int getTeamNum() const;
     void setSpotted(bool value) const;
 
 private:
-    const Process &process;
+    const Process *process;
     std::uintptr_t address;
 };
 
-// Local player's pawn (0 address if not in a match).
 Entity getLocalPlayer(const Process &process);
 
-// Pawns of all players currently on the server.
 std::vector<Entity> getEntities(const Process &process);

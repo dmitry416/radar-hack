@@ -8,19 +8,24 @@
 
 namespace {
     constexpr int VK_TOGGLE = VK_TAB;
+    constexpr int MaxHealth = 100;
+    constexpr auto PollInterval = std::chrono::milliseconds(2);
 
     bool isKeyHeld(int vk) {
         return (GetAsyncKeyState(vk) & 0x8000) != 0;
     }
 
-    // Marks every living enemy as "spotted" so they appear on the in-game radar.
+    bool isPlayerTeam(int team) {
+        return team == TeamT || team == TeamCT;
+    }
+
     void revealEnemies(const Process &process) {
         const Entity local = getLocalPlayer(process);
         const int localHealth = local.getHealth();
-        if (localHealth <= 0 || localHealth > 100) return;
+        if (localHealth <= 0 || localHealth > MaxHealth) return;
 
         const int localTeam = local.getTeamNum();
-        if (localTeam < 2 || localTeam > 3) return;
+        if (!isPlayerTeam(localTeam)) return;
 
         for (const Entity &entity: getEntities(process)) {
             if (entity.getHealth() > 0 && entity.getTeamNum() != localTeam)
@@ -30,22 +35,23 @@ namespace {
 }
 
 int main() {
-    if (!offsets::init()) {
-        std::cerr << "Offsets init failed: " << offsets::last_error() << "
-";
+    Process game;
+    if (!game.attach("cs2.exe")) {
+        std::cerr << "Attach failed: " << game.lastError() << "\n";
         return 1;
     }
-    // Offsets are resolved; Process below is only used for read/write access.
-    offsets::shutdown();
 
-    Process game;
-    if (!game.attach("Counter-Strike 2", "client.dll")) return 1;
+    if (!offsets::init(game)) {
+        std::cerr << "Offsets init failed: " << offsets::lastError() << "\n";
+        return 1;
+    }
 
-    std::cout << "Radar hack: hold [Tab] to enable, release to disable.\n";
+    std::cout << "Attached to cs2.exe (pid " << game.id() << ")\n"
+              << "Radar hack: hold [Tab] to enable, release to disable.\n";
 
     bool wasActive = false;
     while (game.isAlive()) {
-        const bool active = isKeyHeld(VK_TOGGLE);
+        const bool active = isKeyHeld(VK_TOGGLE) && game.isForeground();
         if (active != wasActive) {
             std::cout << (active ? "ON\n" : "OFF\n");
             wasActive = active;
@@ -53,7 +59,7 @@ int main() {
 
         if (active) revealEnemies(game);
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        std::this_thread::sleep_for(PollInterval);
     }
 
     std::cout << "Game closed.\n";
