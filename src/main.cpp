@@ -20,6 +20,11 @@ namespace {
         return team == TeamT || team == TeamCT;
     }
 
+    void hideAll(const Process &process, const GameOffsets &offsets) {
+        for (const Entity &entity: getEntities(process, offsets))
+            entity.setSpotted(false);
+    }
+
     void revealEnemies(const Process &process, const GameOffsets &offsets) {
         const Entity local = getLocalPlayer(process, offsets);
         const int localHealth = local.getHealth();
@@ -55,12 +60,9 @@ int main() {
     bool wasActive = false;
     while (game.isAlive()) {
         const bool active = isKeyHeld(VK_TOGGLE) && game.isForeground();
-        if (active != wasActive) {
-            std::cout << (active ? "ON\n" : "OFF\n");
-            wasActive = active;
-        }
-
         if (active) revealEnemies(game, offsets);
+        else if (wasActive) hideAll(game, offsets);
+        wasActive = active;
 
         std::this_thread::sleep_for(PollInterval);
     }
