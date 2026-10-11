@@ -28,5 +28,8 @@ cmake --build build --config Release
 ```
 Release is the default build type. Run the game first, then start the program (as administrator if opening the process fails).
 
+## License
+Source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE): free for any non-commercial use, commercial use is not permitted. When you redistribute the code or a build, keep the license text and the `Required Notice` line with the author's name.
+
 ## Disclaimer
 Research and education only. Do not use it on VAC-secured servers or in online matches: it violates the game's terms and will get the account banned.
